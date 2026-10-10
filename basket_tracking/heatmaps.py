@@ -16,17 +16,18 @@ HEAT_CMAP = LinearSegmentedColormap.from_list("heat_blue", _RAMP)
 TEAM_COLORS = ["#d03b3b", "#2a78d6", "#7a7a7a"]  # used only for box outlines/labels
 
 
-def panorama_canvas(frame_shape, homographies):
+def panorama_canvas(frame_shape, homographies, max_side=1600):
     """Size of a canvas holding every frame warped into reference coordinates, and the
-    translation that shifts reference pixels onto that canvas."""
+    transform (shift, then downscale to at most `max_side` px) from reference pixels onto it."""
     h, w = frame_shape[:2]
     corners = np.float32([[0, 0], [w, 0], [w, h], [0, h]]).reshape(-1, 1, 2)
     pts = np.concatenate([cv2.perspectiveTransform(corners, H) for H in homographies]).reshape(-1, 2)
     # Guard against a bad homography blowing the canvas up.
     lo = np.maximum(pts.min(axis=0), [-2 * w, -2 * h])
     hi = np.minimum(pts.max(axis=0), [3 * w, 3 * h])
-    T = np.array([[1, 0, -lo[0]], [0, 1, -lo[1]], [0, 0, 1]], dtype=np.float64)
-    size = (int(np.ceil(hi[0] - lo[0])), int(np.ceil(hi[1] - lo[1])))
+    scale = min(1.0, max_side / max(hi - lo))
+    T = np.array([[scale, 0, -lo[0] * scale], [0, scale, -lo[1] * scale], [0, 0, 1]], dtype=np.float64)
+    size = (int(np.ceil((hi[0] - lo[0]) * scale)), int(np.ceil((hi[1] - lo[1]) * scale)))
     return T, size
 
 
@@ -59,8 +60,9 @@ def plot_heatmap(ax, background_rgb, dens, title):
     ax.set_axis_off()
 
 
-def save_heatmaps(out_dir, background_bgr, tracks, size, fps, sigma=8.0, crop=None):
+def save_heatmaps(out_dir, background_bgr, tracks, size, fps, sigma=None, crop=None):
     """tracks: {track_id: dict(points=Nx2 canvas pixels, team=int, label=str)}"""
+    sigma = sigma or max(size) / 100  # blur radius relative to the canvas
     out_dir.mkdir(parents=True, exist_ok=True)
     bg = cv2.cvtColor(background_bgr, cv2.COLOR_BGR2RGB)
     if crop is None and tracks:

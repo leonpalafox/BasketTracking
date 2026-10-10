@@ -126,11 +126,12 @@ def main():
     long_ids = sorted((t for t, n in lengths.items() if n / fps >= args.min_track_seconds), key=lambda t: -lengths[t])
     rows = [r for r in rows if r["track_id"] in long_ids]
 
-    # Two teams from jersey color: k-means on each track's median torso chroma (Lab a*, b*),
-    # ignoring lightness so gym lighting and shadows don't decide the split.
+    # Two teams from jersey color: k-means on each track's median torso Lab color. Lightness
+    # is down-weighted so shadows matter less, but kept so navy vs white still separates.
     team = {t: 2 for t in long_ids}
     if len(long_ids) >= 2:
-        colors = np.array([np.nanmedian([r["color"][1:] for r in rows if r["track_id"] == t], axis=0) for t in long_ids], np.float32)
+        weights = np.array([0.5, 1.0, 1.0], np.float32)
+        colors = np.array([np.nanmedian([r["color"] * weights for r in rows if r["track_id"] == t], axis=0) for t in long_ids], np.float32)
         _, labels, _ = cv2.kmeans(colors, 2, None, (cv2.TERM_CRITERIA_EPS + cv2.TERM_CRITERIA_MAX_ITER, 50, 0.1), 10, cv2.KMEANS_PP_CENTERS)
         team = dict(zip(long_ids, labels.ravel().tolist()))
 
@@ -156,17 +157,19 @@ def main():
     by_frame = {}
     for r in rows:
         by_frame.setdefault(r["frame"], []).append(r)
+    ui = max(frames[0].shape[:2]) / 640  # scale lines and text with the video size
+    thick = max(1, round(ui))
     for i, frame in enumerate(frames):
         frame = frame.copy()
         if court is not None:
             outline = transform_points(np.linalg.inv(homographies[i]), np.asarray(court, np.float32))
-            cv2.polylines(frame, [outline.astype(np.int32)], True, (0, 220, 255), 1, cv2.LINE_AA)
+            cv2.polylines(frame, [outline.astype(np.int32)], True, (0, 220, 255), thick, cv2.LINE_AA)
         for r in by_frame.get(i, []):
             hexc = TEAM_COLORS[team[r["track_id"]]].lstrip("#")
             bgr = tuple(int(hexc[k:k + 2], 16) for k in (4, 2, 0))
             x1, y1, x2, y2 = r["box"].astype(int)
-            cv2.rectangle(frame, (x1, y1), (x2, y2), bgr, 1)
-            cv2.putText(frame, str(r["track_id"]), (x1, y1 - 3), cv2.FONT_HERSHEY_SIMPLEX, 0.4, bgr, 1, cv2.LINE_AA)
+            cv2.rectangle(frame, (x1, y1), (x2, y2), bgr, thick)
+            cv2.putText(frame, str(r["track_id"]), (x1, y1 - 3 * thick), cv2.FONT_HERSHEY_SIMPLEX, 0.4 * ui, bgr, thick, cv2.LINE_AA)
         writer.write(frame)
     writer.release()
     if shutil.which("ffmpeg"):
