@@ -30,12 +30,17 @@ Optional `--config clip.json`:
 ```json
 {
   "reference_frame": 0,
-  "roi": [[x, y], [x, y], ...]
+  "court": [[x, y], [x, y], ...],
+  "court_margin": 0
 }
 ```
 
-`roi` is a polygon in reference-frame pixels (frame `reference_frame` of the clip).
-People whose feet fall outside it (the bench, spectators) are dropped.
+`court` is the playing area as a polygon in reference-frame pixels (frame `reference_frame`
+of the clip). It is a hard check: anyone whose feet (bottom-center of the box) fall
+outside it, such as the bench, coaches, the scorer's table or spectators, is never
+tracked. `court_margin` > 0 requires feet to be that many pixels inside the line. The
+outline is drawn on `annotated.mp4` so you can check it follows the court as the camera
+pans.
 
 Outputs land in `outputs/<clip>/<detector>/`:
 

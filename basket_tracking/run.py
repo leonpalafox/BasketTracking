@@ -6,6 +6,8 @@
 import argparse
 import csv
 import json
+import shutil
+import subprocess
 from pathlib import Path
 
 import cv2
@@ -58,11 +60,13 @@ def torso_color(frame, box):
     return cv2.cvtColor(crop, cv2.COLOR_BGR2LAB).reshape(-1, 3).mean(axis=0)
 
 
-def point_in_roi(points, roi):
-    if roi is None:
+def on_court(points, court, margin=0.0):
+    """True for points at least `margin` pixels inside the court polygon. Without a
+    polygon everything counts as on court."""
+    if court is None:
         return np.ones(len(points), bool)
-    poly = np.asarray(roi, np.float32)
-    return np.array([cv2.pointPolygonTest(poly, (float(x), float(y)), False) >= 0 for x, y in points], bool)
+    poly = np.asarray(court, np.float32)
+    return np.array([cv2.pointPolygonTest(poly, (float(x), float(y)), True) >= margin for x, y in points], bool)
 
 
 def main():
@@ -70,7 +74,7 @@ def main():
     ap.add_argument("--video", required=True, type=Path)
     ap.add_argument("--out", type=Path, default=Path("outputs"))
     ap.add_argument("--detector", choices=["roboflow", "yolo"], default="roboflow")
-    ap.add_argument("--config", type=Path, help="JSON with optional 'reference_frame' and 'roi' (polygon in reference-frame pixels)")
+    ap.add_argument("--config", type=Path, help="JSON with optional 'reference_frame', 'court' (polygon in reference-frame pixels) and 'court_margin'")
     ap.add_argument("--min-track-seconds", type=float, default=2.0)
     ap.add_argument("--no-cache", action="store_true")
     args = ap.parse_args()
@@ -84,6 +88,7 @@ def main():
     boxes, confs = detect_all(frames, args, out / "detections.npz")
 
     ref_idx = config.get("reference_frame", 0)
+    court = config.get("court")
     stabilizer = Stabilizer(frames[ref_idx])
     tracker = sv.ByteTrack(frame_rate=int(round(fps)), lost_track_buffer=int(fps * 2))
     homographies, rows = [], []
@@ -94,7 +99,8 @@ def main():
         img_boxes = boxes[i]
         feet_img = np.c_[(img_boxes[:, 0] + img_boxes[:, 2]) / 2, img_boxes[:, 3]] if len(img_boxes) else np.zeros((0, 2))
         feet_ref = transform_points(H, feet_img)
-        keep = point_in_roi(feet_ref, config.get("roi"))
+        # Hard court check: people whose feet are off court are never handed to the tracker.
+        keep = on_court(feet_ref, court, config.get("court_margin", 0.0))
 
         # Track in reference coordinates so camera pans don't look like player motion.
         det = sv.Detections(
@@ -152,6 +158,9 @@ def main():
         by_frame.setdefault(r["frame"], []).append(r)
     for i, frame in enumerate(frames):
         frame = frame.copy()
+        if court is not None:
+            outline = transform_points(np.linalg.inv(homographies[i]), np.asarray(court, np.float32))
+            cv2.polylines(frame, [outline.astype(np.int32)], True, (0, 220, 255), 1, cv2.LINE_AA)
         for r in by_frame.get(i, []):
             hexc = TEAM_COLORS[team[r["track_id"]]].lstrip("#")
             bgr = tuple(int(hexc[k:k + 2], 16) for k in (4, 2, 0))
@@ -160,6 +169,11 @@ def main():
             cv2.putText(frame, str(r["track_id"]), (x1, y1 - 3), cv2.FONT_HERSHEY_SIMPLEX, 0.4, bgr, 1, cv2.LINE_AA)
         writer.write(frame)
     writer.release()
+    if shutil.which("ffmpeg"):
+        # OpenCV writes MPEG-4 Part 2, which phones and browsers often won't play.
+        subprocess.run(["ffmpeg", "-v", "error", "-y", "-i", str(out / "annotated.mp4"), "-c:v", "libx264",
+                        "-pix_fmt", "yuv420p", "-crf", "20", "-movflags", "+faststart", str(out / "annotated_h264.mp4")], check=False)
+        (out / "annotated_h264.mp4").replace(out / "annotated.mp4")
 
     print(f"{len(long_ids)} tracks >= {args.min_track_seconds}s. Outputs in {out}")
 
