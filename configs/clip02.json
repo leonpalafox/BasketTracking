@@ -1,0 +1,23 @@
+{
+  "reference_frame": 0,
+  "court_calibration": {
+    "_comment": "Landmarks in reference-frame pixels -> FIBA court meters (x from left sideline, y from baseline): baseline-left corner, left lane at baseline, left/right lane at free-throw line, left sideline at half court, end of left 3-pt corner line.",
+    "image_points": [
+      [94.9, 879.8],
+      [786.1, 847.1],
+      [979.9, 1081.7],
+      [1803.9, 1031.9],
+      [140.0, 1913.1],
+      [249.1, 999.2]
+    ],
+    "court_points": [
+      [0, 0],
+      [5.05, 0],
+      [5.05, 5.8],
+      [9.95, 5.8],
+      [0, 14],
+      [0.9, 2.99]
+    ]
+  },
+  "court_margin": -0.5
+}

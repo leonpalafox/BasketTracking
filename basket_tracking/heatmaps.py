@@ -108,3 +108,74 @@ def save_heatmaps(out_dir, background_bgr, tracks, size, fps, sigma=None, crop=N
         plot_heatmap(ax, bg, all_dens, "All tracked players")
         fig.savefig(out_dir.parent / "heatmap_all.png", bbox_inches="tight")
         plt.close(fig)
+
+
+COURT_BG = "#f4efe6"   # light wood tone so the blue heat reads clearly
+COURT_RES = 0.05       # meters per density cell
+
+
+def court_density(points, fps, sigma_m=0.6):
+    from .court import HALF_LENGTH, WIDTH
+
+    nx, ny = int((WIDTH + 1) / COURT_RES), int((HALF_LENGTH + 1) / COURT_RES)
+    hist, _, _ = np.histogram2d(
+        points[:, 1], points[:, 0], bins=(ny, nx),
+        range=((-0.5, HALF_LENGTH + 0.5), (-0.5, WIDTH + 0.5)),
+        weights=np.full(len(points), 1.0 / fps),
+    )
+    return gaussian_filter(hist, sigma_m / COURT_RES)  # seconds per cell, smoothed
+
+
+def plot_court_heatmap(ax, dens, title, vmax=None):
+    from .court import HALF_LENGTH, WIDTH, draw_court
+
+    ax.set_facecolor(COURT_BG)
+    ax.add_patch(plt.Rectangle((-0.5, -0.5), WIDTH + 1, HALF_LENGTH + 1, color=COURT_BG, zorder=0))
+    vmax = vmax or dens.max()
+    if vmax > 0:
+        norm = np.clip(dens / vmax, 0, 1)
+        rgba = HEAT_CMAP(norm)
+        rgba[..., 3] = np.clip(norm * 1.4, 0, 0.9)
+        ax.imshow(rgba, extent=(-0.5, WIDTH + 0.5, HALF_LENGTH + 0.5, -0.5), interpolation="bilinear", zorder=2)
+    draw_court(ax)
+    ax.set_title(title, fontsize=10, color="#222")
+
+
+def save_court_heatmaps(out_dir, tracks, fps):
+    """Top-down heat maps on a FIBA half court. tracks[tid]['court'] holds Nx2 meters."""
+    out_dir.mkdir(parents=True, exist_ok=True)
+    dens = {t: court_density(tr["court"], fps) for t, tr in tracks.items()}
+
+    def title(t):
+        return f"{tracks[t]['label']} · {len(tracks[t]['court']) / fps:.1f}s"
+
+    for t in tracks:
+        fig, ax = plt.subplots(figsize=(6, 6), dpi=130)
+        plot_court_heatmap(ax, dens[t], title(t))
+        fig.savefig(out_dir / f"player_{t:03d}.png", bbox_inches="tight", facecolor="white")
+        plt.close(fig)
+
+    ids = list(tracks)
+    if not ids:
+        return
+    cols = min(4, len(ids))
+    rows = int(np.ceil(len(ids) / cols))
+    fig, axes = plt.subplots(rows, cols, figsize=(3.6 * cols, 3.6 * rows + 0.5), dpi=120, squeeze=False)
+    for ax in axes.flat:
+        ax.set_axis_off()
+    for ax, t in zip(axes.flat, ids):
+        plot_court_heatmap(ax, dens[t], title(t))
+    fig.suptitle("Where each tracked player spent their time (top-down)", fontsize=13, color="#222")
+    fig.tight_layout(rect=(0, 0, 1, 0.97))
+    fig.savefig(out_dir.parent / "court_heatmaps_grid.png", bbox_inches="tight", facecolor="white")
+    plt.close(fig)
+
+    # All players, then one panel per team.
+    teams = sorted({tr["team_name"] for tr in tracks.values()})
+    panels = [("All tracked players", ids)] + [(name.capitalize(), [t for t in ids if tracks[t]["team_name"] == name]) for name in teams]
+    fig, axes = plt.subplots(1, len(panels), figsize=(5.5 * len(panels), 5.8), dpi=130, squeeze=False)
+    for ax, (name, members) in zip(axes.flat, panels):
+        plot_court_heatmap(ax, sum(dens[t] for t in members), f"{name} · {len(members)} tracks")
+    fig.tight_layout()
+    fig.savefig(out_dir.parent / "court_heatmap_teams.png", bbox_inches="tight", facecolor="white")
+    plt.close(fig)
