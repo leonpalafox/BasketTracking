@@ -1,0 +1,9 @@
+supervision>=0.25,<0.31  # sv.ByteTrack is removed in 0.31
+opencv-python-headless>=4.8
+numpy
+scipy
+matplotlib
+# --detector roboflow (hosted basketball model)
+inference-sdk
+# --detector yolo (generic COCO person model, runs locally)
+ultralytics

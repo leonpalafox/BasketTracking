@@ -1,0 +1,73 @@
+# BasketTracking
+
+Track basketball players in phone footage and make a heat map per player.
+
+```
+phone video ─► detect players ─► camera-motion compensation ─► ByteTrack ─► team split (jersey color)
+            ─► per-player heat maps on a player-free panorama of the court
+```
+
+## Setup
+
+```bash
+python3 -m venv .venv
+.venv/bin/pip install -r requirements.txt
+```
+
+## Run
+
+```bash
+# Roboflow's basketball-tuned model (RF-DETR, hosted). Free API key: https://app.roboflow.com/settings/api
+export ROBOFLOW_API_KEY=...
+.venv/bin/python -m basket_tracking.run --video data/clip01.MOV --detector roboflow
+
+# Generic COCO YOLO "person" detector, runs locally (also picks up refs, coaches and spectators)
+.venv/bin/python -m basket_tracking.run --video data/clip01.MOV --detector yolo
+```
+
+Optional `--config clip.json`:
+
+```json
+{
+  "reference_frame": 0,
+  "roi": [[x, y], [x, y], ...]
+}
+```
+
+`roi` is a polygon in reference-frame pixels (frame `reference_frame` of the clip).
+People whose feet fall outside it (the bench, spectators) are dropped.
+
+Outputs land in `outputs/<clip>/<detector>/`:
+
+| file | what |
+|---|---|
+| `annotated.mp4` | original video with track IDs, colored by team |
+| `tracks.csv` | per-frame boxes, team and foot position in reference-frame pixels |
+| `panorama.jpg` | court background stitched from the clip with players removed |
+| `heatmaps/player_XXX.png` | one heat map per track |
+| `heatmaps_grid.png`, `heatmap_all.png` | all players side by side / combined |
+
+Detections are cached in `detections.npz`; pass `--no-cache` to re-detect.
+
+## How it works
+
+- **Detection** – `basket_tracking/detectors.py`. The Roboflow model
+  (`basketball-player-detection-3-ycjdo`) separates players from referees, so it is the
+  default. Classes `player`, `player-in-possession`, `player-jump-shot`,
+  `player-layup-dunk`, `player-shot-block` are kept.
+- **Camera motion** – `basket_tracking/stabilize.py`. Handheld footage pans, so every
+  frame is registered to a reference frame with SIFT + RANSAC homography (players
+  masked out). All positions are expressed in reference-frame pixels.
+- **Tracking** – ByteTrack runs on the stabilized boxes, so a camera pan doesn't look
+  like every player moving at once.
+- **Teams** – k-means (k=2) on each track's median torso color.
+- **Heat maps** – each player's foot point (bottom-center of the box), weighted by
+  time, blurred, drawn over the panorama.
+
+## Limitations / next steps
+
+- Heat maps are in the camera's perspective, not a top-down court. Adding a court
+  homography (click 4+ court landmarks once) turns them into a top-down court view.
+- Track IDs fragment when players cross or leave the frame. Stitching fragments into
+  10 real identities (jersey numbers, or a quick manual label step) is the next step.
+- For best results film from a tripod, high up, with the whole court in view.
